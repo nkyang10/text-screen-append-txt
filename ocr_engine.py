@@ -30,18 +30,16 @@ class OCREngine:
         self.config = config
         self.logger = logger
         self._engine = None
-        self._init_engine()
 
-    # ------------------------------------------------------------------
-    #  Initialisation
-    # ------------------------------------------------------------------
-
-    def _init_engine(self) -> None:
+    def warm(self) -> None:
         """Import and instantiate the RapidOCR engine.
 
         Models are downloaded automatically to ``~/.rapidocr/`` on first use.
-        This may take several seconds.
+        This may take several seconds. Call this after the GUI is visible to
+        avoid blocking startup.
         """
+        if self._engine is not None:
+            return
         try:
             from rapidocr_onnxruntime import RapidOCR
 
@@ -56,7 +54,7 @@ class OCREngine:
             raise SystemExit(
                 "Missing dependency: rapidocr-onnxruntime\n"
                 "  Install with:  pip install rapidocr-onnxruntime"
-            )
+            ) from None
         except Exception:
             self.logger.exception("RapidOCR initialisation failed")
             raise
@@ -79,6 +77,8 @@ class OCREngine:
             ``(text, confidence)`` pairs, sorted left-to-right top-to-bottom.
             May be empty.
         """
+        if self._engine is None:
+            self.warm()
         img_array = np.array(image)
         try:
             result, elapse = self._engine(img_array)

@@ -72,6 +72,13 @@ class AreaSelector:
             fill="white",
             font=("Arial", 14, "bold"),
         )
+        canvas.create_text(
+            screen_w // 2,
+            54,
+            text="Ctrl+Enter=Start  Ctrl+Period=Stop",
+            fill="#cccccc",
+            font=("Arial", 10),
+        )
 
         rect_id: int | None = None
         start_x = start_y = 0

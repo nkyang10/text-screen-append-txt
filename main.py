@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sys
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox
 from datetime import datetime
 
@@ -59,6 +60,7 @@ class SubtitleCaptureApp:
 
         # OCR engine --------------------------------------------------------
         self.ocr = OCREngine(self.config, self.logger)
+        self._ocr_ready = False
 
         # Deduplicator ------------------------------------------------------
         self.dedup = TextDeduplicator(
@@ -69,13 +71,17 @@ class SubtitleCaptureApp:
         # Runtime state -----------------------------------------------------
         self._running: bool = False
         self._capturer: ScreenCapturer | None = None
-        self._output_file = None
+        self._output_file: Path | None = None
         self._area: tuple[int, int, int, int] | None = None
         self._capture_count = 0
         self._new_count = 0
         self._skip_count = 0
+        self._write_error_count = 0
 
         self._build_gui()
+
+        # Defer OCR engine warm-up so the window appears immediately.
+        self.root.after(100, self._defer_ocr_init)
 
     # ======================================================================
     #  GUI
@@ -104,6 +110,10 @@ class SubtitleCaptureApp:
         self._count_var = tk.StringVar(value="0 captures  |  0 new  |  0 skipped")
         tk.Label(self.root, textvariable=self._count_var, fg="gray").pack()
 
+        # Output path
+        self._output_var = tk.StringVar(value="")
+        tk.Label(self.root, textvariable=self._output_var, fg="gray", wraplength=300).pack()
+
         # Start button
         self._start_btn = tk.Button(
             self.root,
@@ -127,13 +137,29 @@ class SubtitleCaptureApp:
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        self.root.bind("<Control-Return>", lambda _: self._on_start())
+        self.root.bind("<Control-period>", lambda _: self._on_stop())
+
     # ======================================================================
     #  Actions
     # ======================================================================
 
+    def _defer_ocr_init(self) -> None:
+        """Warm the OCR engine in background so first capture is fast."""
+        self._status_var.set("Initialising OCR engine...")
+        self.root.update()
+        try:
+            self.ocr.warm()
+            self._ocr_ready = True
+            self._status_var.set("Ready.  Click Start Capture.")
+        except Exception:
+            self.logger.exception("OCR initialisation failed")
+            self._status_var.set("OCR init failed - see logs")
+            self._ocr_ready = False
+
     def _on_start(self) -> None:
         """Initiate area selection, confirm, then begin capture loop."""
-        self._status_var.set("Selecting area…")
+        self._status_var.set("Selecting area...")
         self._start_btn.config(state=tk.DISABLED)
         self.root.update()
 
@@ -167,6 +193,7 @@ class SubtitleCaptureApp:
         self._output_file = self.config.OUTPUT_DIR / f"{timestamp}.txt"
         self._output_file.write_text("", encoding="utf-8")
         self.logger.info("Output file: %s", self._output_file)
+        self._after_set_output(f"Output: {self._output_file.name}")
 
         # 4. Reset dedup state ----------------------------------------------
         self.dedup.reset()
@@ -201,31 +228,43 @@ class SubtitleCaptureApp:
         )
 
     def _on_capture(self, image) -> None:
-        """Process one captured frame: save debug image → OCR → dedup → write."""
+        """Process one captured frame: save debug image -> OCR -> dedup -> write."""
         self._capture_count += 1
 
-        # Save debug image --------------------------------------------------
         if self.config.DEBUG_MODE:
             debug_path = self.config.DEBUG_DIR / f"frame_{self._capture_count:04d}.png"
-            image.save(debug_path)
-            self.logger.debug("Saved debug frame %d", self._capture_count)
+            try:
+                image.save(debug_path)
+                self.logger.debug("Saved debug frame %d", self._capture_count)
+            except OSError:
+                self.logger.exception("Failed to save debug frame #%d", self._capture_count)
 
-        # OCR ---------------------------------------------------------------
-        text = self.ocr.recognize_text_only(image)
+        try:
+            text = self.ocr.recognize_text_only(image)
+        except Exception:
+            self.logger.exception("OCR failed on frame #%d", self._capture_count)
+            self._after_set_status("OCR error - check logs")
+            self._after_update_counts()
+            return
+
         if not text:
             self._skip_count += 1
             self.logger.debug("No text in frame #%d", self._capture_count)
             self._after_update_counts()
             return
 
-        # Dedup -------------------------------------------------------------
         new_text = self.dedup.get_new_text(text)
         if new_text:
             self._new_count += 1
-            with open(self._output_file, "a", encoding="utf-8") as fh:
-                fh.write(new_text + "\n")
-            self.logger.info("NEW  [%d] %s", self._new_count, new_text[:120])
-            self._after_set_status(f"Captured: {new_text[:60]}…")
+            try:
+                with open(self._output_file, "a", encoding="utf-8") as fh:
+                    fh.write(new_text + "\n")
+                self.logger.info("NEW  [%d] %s", self._new_count, new_text[:120])
+                self._after_set_status(f"Captured: {new_text[:60]}...")
+            except OSError:
+                self._write_error_count += 1
+                self.logger.exception("Failed to write output file: %s", self._output_file)
+                self._after_set_status("Write error - check disk space")
         else:
             self._skip_count += 1
             self.logger.debug("Duplicate text, skipped")
@@ -246,6 +285,9 @@ class SubtitleCaptureApp:
 
     def _after_set_status(self, msg: str) -> None:
         self.root.after(0, lambda: self._status_var.set(msg))
+
+    def _after_set_output(self, msg: str) -> None:
+        self.root.after(0, lambda: self._output_var.set(msg))
 
     # ======================================================================
     #  Lifecycle
