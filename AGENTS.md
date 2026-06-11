@@ -27,6 +27,7 @@ text-screen-append-txt/
 ├── screen_capture.py    # AreaSelector + ScreenCapturer classes
 ├── ocr_engine.py        # OCREngine wrapping RapidOCR
 ├── text_dedup.py        # TextDeduplicator – rolling window + seen-set
+├── run.bat              # Convenience launcher (uses venv automatically)
 └── __init__.py          # Package init, version
 ```
 

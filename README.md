@@ -64,6 +64,8 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Or double-click `run.bat` (uses the virtual environment automatically).
+
 1. Click **Start Capture**.
 2. Drag a rectangle over the subtitle area on your screen.
 3. Press **ESC** to cancel, or release the mouse to confirm.
